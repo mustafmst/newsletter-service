@@ -16,11 +16,13 @@ import (
 )
 
 type SMTPSender struct {
-	host     string
-	port     int
-	username string
-	password string
-	tlsMode  string
+	host      string
+	port      int
+	username  string
+	password  string
+	fromEmail string
+	fromName  string
+	tlsMode   string
 }
 
 func NewSMTPSender(cfg config.Config) (*SMTPSender, error) {
@@ -30,11 +32,13 @@ func NewSMTPSender(cfg config.Config) (*SMTPSender, error) {
 		return nil, fmt.Errorf("unsupported SMTP TLS mode %q", cfg.SMTPTLSMode)
 	}
 	return &SMTPSender{
-		host:     cfg.SMTPHost,
-		port:     cfg.SMTPPort,
-		username: cfg.SMTPUsername,
-		password: cfg.SMTPPassword,
-		tlsMode:  cfg.SMTPTLSMode,
+		host:      cfg.SMTPHost,
+		port:      cfg.SMTPPort,
+		username:  cfg.SMTPUsername,
+		password:  cfg.SMTPPassword,
+		fromEmail: cfg.SMTPFromEmail,
+		fromName:  cfg.SMTPFromName,
+		tlsMode:   cfg.SMTPTLSMode,
 	}, nil
 }
 
@@ -42,6 +46,7 @@ func (s *SMTPSender) Send(ctx context.Context, msg Message) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	msg = s.messageWithDefaults(msg)
 	addr := net.JoinHostPort(s.host, fmt.Sprintf("%d", s.port))
 	auth := smtp.PlainAuth("", s.username, s.password, s.host)
 	payload := buildMIMEMessage(msg)
@@ -56,6 +61,16 @@ func (s *SMTPSender) Send(ctx context.Context, msg Message) error {
 	default:
 		return errors.New("unsupported SMTP TLS mode")
 	}
+}
+
+func (s *SMTPSender) messageWithDefaults(msg Message) Message {
+	if msg.FromEmail == "" {
+		msg.FromEmail = s.fromEmail
+	}
+	if msg.FromName == "" {
+		msg.FromName = s.fromName
+	}
+	return msg
 }
 
 func (s *SMTPSender) sendStartTLS(addr string, auth smtp.Auth, msg Message, payload []byte) error {

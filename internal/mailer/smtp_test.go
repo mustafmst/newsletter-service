@@ -22,6 +22,19 @@ func TestNewSMTPSenderRejectsUnsupportedTLSMode(t *testing.T) {
 	}
 }
 
+func TestSMTPSenderAppliesConfiguredFromDefaults(t *testing.T) {
+	sender, err := NewSMTPSender(smtpTestConfig("none"))
+	if err != nil {
+		t.Fatalf("NewSMTPSender() error = %v", err)
+	}
+
+	msg := sender.messageWithDefaults(Message{ToEmail: "user@example.com", Subject: "Subject", HTML: []byte("<p>Hello</p>")})
+
+	if msg.FromEmail != "news@example.com" || msg.FromName != "Example" {
+		t.Fatalf("from defaults = %+v", msg)
+	}
+}
+
 func smtpTestConfig(mode string) config.Config {
 	return config.Config{
 		SMTPHost:      "smtp.example.com",
