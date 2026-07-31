@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Newsletter</title>
+  <link rel="stylesheet" href="/assets/site.css">
+</head>
+<body>
+  <main class="page">
+    <section class="panel">
+      <h1>Newsletter</h1>
+      <form action="/subscribe" method="post">
+        <label for="subscribe-email">Email address</label>
+        <div class="row">
+          <input id="subscribe-email" name="email" type="email" autocomplete="email" required>
+          <button type="submit">Subscribe</button>
+        </div>
+      </form>
+      <form action="/unsubscribe" method="post">
+        <label for="unsubscribe-email">Unsubscribe</label>
+        <div class="row">
+          <input id="unsubscribe-email" name="email" type="email" autocomplete="email" required>
+          <button type="submit">Unsubscribe</button>
+        </div>
+      </form>
+    </section>
+  </main>
+</body>
+</html>

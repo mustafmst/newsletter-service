@@ -1,0 +1,36 @@
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./public:/app/public:ro
+      - ./newsletters:/app/newsletters:ro
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.newsletter.rule=Host(`${TRAEFIK_HOST}`)
+      - traefik.http.routers.newsletter.entrypoints=${TRAEFIK_ENTRYPOINT}
+      - traefik.http.routers.newsletter.tls.certresolver=${TRAEFIK_CERT_RESOLVER}
+      - traefik.http.services.newsletter.loadbalancer.server.port=8080
+
+  postgres:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: newsletter
+      POSTGRES_PASSWORD: newsletter
+      POSTGRES_DB: newsletter
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U newsletter -d newsletter"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres-data:
