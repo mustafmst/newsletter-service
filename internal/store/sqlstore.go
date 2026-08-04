@@ -293,21 +293,27 @@ WHERE id = ?`), tok.SubscriberID))
 }
 
 func (s *SQLStore) useTokenTx(ctx context.Context, tx *sqlx.Tx, hash string, purpose TokenPurpose, now time.Time) (Token, error) {
+	res, err := tx.ExecContext(ctx, s.rebind(`
+UPDATE tokens
+SET used_at = ?
+WHERE hash = ? AND purpose = ? AND used_at IS NULL AND expires_at > ?`), formatTime(now), hash, string(purpose), formatTime(now))
+	if err != nil {
+		return Token{}, err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return Token{}, err
+	}
+	if affected == 0 {
+		return Token{}, ErrNotFound
+	}
 	tok, err := scanToken(tx.QueryRowxContext(ctx, s.rebind(`
 SELECT id, subscriber_id, purpose, hash, expires_at, created_at, used_at
 FROM tokens
-WHERE hash = ? AND purpose = ? AND used_at IS NULL AND expires_at > ?`), hash, string(purpose), formatTime(now)))
-	if errors.Is(err, sql.ErrNoRows) {
-		return Token{}, ErrNotFound
-	}
+WHERE hash = ? AND purpose = ?`), hash, string(purpose)))
 	if err != nil {
 		return Token{}, err
 	}
-	_, err = tx.ExecContext(ctx, s.rebind(`UPDATE tokens SET used_at = ? WHERE id = ?`), formatTime(now), tok.ID)
-	if err != nil {
-		return Token{}, err
-	}
-	tok.UsedAt = &now
 	return tok, nil
 }
 

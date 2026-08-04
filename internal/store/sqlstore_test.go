@@ -55,6 +55,49 @@ func TestTokenLifecycle(t *testing.T) {
 	}
 }
 
+func TestUseTokenRejectsExpiredToken(t *testing.T) {
+	ctx := context.Background()
+	st := openTestStore(t, ctx)
+	now := time.Date(2026, 8, 4, 12, 0, 0, 0, time.UTC)
+
+	sub, err := st.UpsertPendingSubscriber(ctx, "user@example.com", now)
+	if err != nil {
+		t.Fatalf("UpsertPendingSubscriber() error = %v", err)
+	}
+	if _, err := st.CreateToken(ctx, sub.ID, TokenConfirmSubscribe, "expired-token", now.Add(-time.Minute), now.Add(-2*time.Minute)); err != nil {
+		t.Fatalf("CreateToken() error = %v", err)
+	}
+
+	if _, err := st.UseToken(ctx, "expired-token", TokenConfirmSubscribe, now); err == nil {
+		t.Fatal("UseToken() error = nil, want expired token error")
+	}
+}
+
+func TestUseTokenRejectsSecondUse(t *testing.T) {
+	ctx := context.Background()
+	st := openTestStore(t, ctx)
+	now := time.Date(2026, 8, 4, 12, 0, 0, 0, time.UTC)
+
+	sub, err := st.UpsertPendingSubscriber(ctx, "user@example.com", now)
+	if err != nil {
+		t.Fatalf("UpsertPendingSubscriber() error = %v", err)
+	}
+	if _, err := st.CreateToken(ctx, sub.ID, TokenConfirmSubscribe, "one-time-token", now.Add(time.Hour), now); err != nil {
+		t.Fatalf("CreateToken() error = %v", err)
+	}
+
+	first, err := st.UseToken(ctx, "one-time-token", TokenConfirmSubscribe, now.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("first UseToken() error = %v", err)
+	}
+	if first.UsedAt == nil {
+		t.Fatal("first token UsedAt = nil")
+	}
+	if _, err := st.UseToken(ctx, "one-time-token", TokenConfirmSubscribe, now.Add(2*time.Minute)); err == nil {
+		t.Fatal("second UseToken() error = nil, want already-used error")
+	}
+}
+
 func TestCampaignHashIsUnique(t *testing.T) {
 	ctx := context.Background()
 	st := openTestStore(t, ctx)
