@@ -29,6 +29,8 @@ type smtpClient interface {
 
 type smtpClientFactory func(conn net.Conn, host string) (smtpClient, error)
 
+type smtpDialContext func(ctx context.Context, network, address string) (net.Conn, error)
+
 type SMTPSender struct {
 	host          string
 	port          int
@@ -39,6 +41,7 @@ type SMTPSender struct {
 	tlsMode       string
 	timeout       time.Duration
 	clientFactory smtpClientFactory
+	dialContext   smtpDialContext
 }
 
 func NewSMTPSender(cfg config.Config) (*SMTPSender, error) {
@@ -57,6 +60,7 @@ func NewSMTPSender(cfg config.Config) (*SMTPSender, error) {
 		tlsMode:       cfg.SMTPTLSMode,
 		timeout:       cfg.SMTPTimeout,
 		clientFactory: newSMTPClient,
+		dialContext:   (&net.Dialer{Timeout: cfg.SMTPTimeout}).DialContext,
 	}, nil
 }
 
@@ -100,8 +104,7 @@ func (s *SMTPSender) applyDeadline(conn net.Conn) error {
 }
 
 func (s *SMTPSender) dialPlain(ctx context.Context, addr string) (net.Conn, error) {
-	dialer := &net.Dialer{Timeout: s.timeout}
-	conn, err := dialer.DialContext(ctx, "tcp", addr)
+	conn, err := s.dialContext(ctx, "tcp", addr)
 	if err != nil {
 		return nil, err
 	}
@@ -113,11 +116,7 @@ func (s *SMTPSender) dialPlain(ctx context.Context, addr string) (net.Conn, erro
 }
 
 func (s *SMTPSender) dialTLS(ctx context.Context, addr string) (net.Conn, error) {
-	dialer := tls.Dialer{
-		NetDialer: &net.Dialer{Timeout: s.timeout},
-		Config:    &tls.Config{ServerName: s.host, MinVersion: tls.VersionTLS12},
-	}
-	conn, err := dialer.DialContext(ctx, "tcp", addr)
+	conn, err := s.dialContext(ctx, "tcp", addr)
 	if err != nil {
 		return nil, err
 	}
@@ -125,7 +124,12 @@ func (s *SMTPSender) dialTLS(ctx context.Context, addr string) (net.Conn, error)
 		_ = conn.Close()
 		return nil, err
 	}
-	return conn, nil
+	tlsConn := tls.Client(conn, &tls.Config{ServerName: s.host, MinVersion: tls.VersionTLS12})
+	if err := tlsConn.HandshakeContext(ctx); err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+	return tlsConn, nil
 }
 
 func (s *SMTPSender) sendPlain(ctx context.Context, addr string, auth smtp.Auth, msg Message, payload []byte) error {

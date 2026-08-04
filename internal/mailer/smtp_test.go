@@ -1,6 +1,8 @@
 package mailer
 
 import (
+	"context"
+	"errors"
 	"net"
 	"testing"
 	"time"
@@ -62,6 +64,55 @@ func TestSMTPSenderAppliesConnectionDeadline(t *testing.T) {
 	}
 	if conn.deadline.Before(before.Add(29*time.Second)) || conn.deadline.After(before.Add(31*time.Second)) {
 		t.Fatalf("deadline = %s, want roughly 30s from now", conn.deadline)
+	}
+}
+
+var errTLSHandshakeRead = errors.New("TLS handshake read")
+
+type handshakeDeadlineConn struct {
+	deadline time.Time
+}
+
+func (c *handshakeDeadlineConn) Read([]byte) (int, error) {
+	if c.deadline.IsZero() {
+		return 0, errors.New("TLS handshake read before deadline")
+	}
+	return 0, errTLSHandshakeRead
+}
+
+func (*handshakeDeadlineConn) Write(p []byte) (int, error) {
+	return len(p), nil
+}
+
+func (*handshakeDeadlineConn) Close() error                     { return nil }
+func (*handshakeDeadlineConn) LocalAddr() net.Addr              { return nil }
+func (*handshakeDeadlineConn) RemoteAddr() net.Addr             { return nil }
+func (c *handshakeDeadlineConn) SetDeadline(t time.Time) error  { c.deadline = t; return nil }
+func (*handshakeDeadlineConn) SetReadDeadline(time.Time) error  { return nil }
+func (*handshakeDeadlineConn) SetWriteDeadline(time.Time) error { return nil }
+
+func TestSMTPSenderSendTLSAppliesDeadlineBeforeHandshake(t *testing.T) {
+	cfg := smtpTestConfig("tls")
+	cfg.SMTPTimeout = 30 * time.Second
+	sender, err := NewSMTPSender(cfg)
+	if err != nil {
+		t.Fatalf("NewSMTPSender() error = %v", err)
+	}
+	conn := &handshakeDeadlineConn{}
+	sender.dialContext = func(context.Context, string, string) (net.Conn, error) {
+		return conn, nil
+	}
+
+	err = sender.Send(context.Background(), Message{
+		ToEmail: "user@example.com",
+		Subject: "Subject",
+		HTML:    []byte("<p>Hello</p>"),
+	})
+	if !errors.Is(err, errTLSHandshakeRead) {
+		t.Fatalf("Send() error = %v, want TLS handshake read after deadline", err)
+	}
+	if conn.deadline.IsZero() {
+		t.Fatal("Send() did not set a deadline before the TLS handshake")
 	}
 }
 
