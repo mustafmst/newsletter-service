@@ -32,6 +32,7 @@ func (l *Limiter) Allow(key string) bool {
 	minute := l.now().Unix() / 60
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	l.pruneLocked(minute)
 	current := l.hits[key]
 	if current.minute != minute {
 		current = bucket{minute: minute}
@@ -43,4 +44,12 @@ func (l *Limiter) Allow(key string) bool {
 	current.count++
 	l.hits[key] = current
 	return true
+}
+
+func (l *Limiter) pruneLocked(currentMinute int64) {
+	for key, hit := range l.hits {
+		if hit.minute < currentMinute {
+			delete(l.hits, key)
+		}
+	}
 }

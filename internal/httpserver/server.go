@@ -21,12 +21,13 @@ type Dependencies struct {
 }
 
 type server struct {
-	store   store.Store
-	sender  mailer.Sender
-	cfg     config.Config
-	logger  *slog.Logger
-	clock   func() time.Time
-	limiter *ratelimit.Limiter
+	store             store.Store
+	sender            mailer.Sender
+	cfg               config.Config
+	logger            *slog.Logger
+	clock             func() time.Time
+	limiter           *ratelimit.Limiter
+	trustProxyHeaders bool
 }
 
 func New(deps Dependencies) http.Handler {
@@ -37,12 +38,13 @@ func New(deps Dependencies) http.Handler {
 		deps.Clock = time.Now
 	}
 	s := &server{
-		store:   deps.Store,
-		sender:  deps.Sender,
-		cfg:     deps.Config,
-		logger:  deps.Logger,
-		clock:   deps.Clock,
-		limiter: ratelimit.New(deps.Config.RateLimitPerMinute, deps.Clock),
+		store:             deps.Store,
+		sender:            deps.Sender,
+		cfg:               deps.Config,
+		logger:            deps.Logger,
+		clock:             deps.Clock,
+		limiter:           ratelimit.New(deps.Config.RateLimitPerMinute, deps.Clock),
+		trustProxyHeaders: deps.Config.TrustProxyHeaders,
 	}
 
 	mux := http.NewServeMux()

@@ -137,15 +137,17 @@ func (s *server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) allow(r *http.Request) bool {
-	return s.limiter.Allow(clientIP(r))
+	return s.limiter.Allow(clientIP(r, s.trustProxyHeaders))
 }
 
-func clientIP(r *http.Request) string {
-	forwarded := r.Header.Get("X-Forwarded-For")
-	if forwarded != "" {
-		first, _, _ := strings.Cut(forwarded, ",")
-		if trimmed := strings.TrimSpace(first); trimmed != "" {
-			return trimmed
+func clientIP(r *http.Request, trustProxyHeaders bool) string {
+	if trustProxyHeaders {
+		forwarded := r.Header.Get("X-Forwarded-For")
+		if forwarded != "" {
+			first, _, _ := strings.Cut(forwarded, ",")
+			if trimmed := strings.TrimSpace(first); trimmed != "" {
+				return trimmed
+			}
 		}
 	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)

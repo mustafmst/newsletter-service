@@ -124,6 +124,28 @@ func TestHealthzReturnsOKWhenStorePingSucceeds(t *testing.T) {
 	}
 }
 
+func TestClientIPIgnoresForwardedForWhenProxyTrustDisabled(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/subscribe", nil)
+	req.RemoteAddr = "198.51.100.20:4321"
+	req.Header.Set("X-Forwarded-For", "203.0.113.10")
+
+	got := clientIP(req, false)
+	if got != "198.51.100.20" {
+		t.Fatalf("clientIP() = %q, want remote address", got)
+	}
+}
+
+func TestClientIPUsesForwardedForWhenProxyTrustEnabled(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/subscribe", nil)
+	req.RemoteAddr = "198.51.100.20:4321"
+	req.Header.Set("X-Forwarded-For", "203.0.113.10, 203.0.113.11")
+
+	got := clientIP(req, true)
+	if got != "203.0.113.10" {
+		t.Fatalf("clientIP() = %q, want first forwarded IP", got)
+	}
+}
+
 func newTestServer(st store.Store, sender mailer.Sender) http.Handler {
 	return New(Dependencies{
 		Store:  st,
