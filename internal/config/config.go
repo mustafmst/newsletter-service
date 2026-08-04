@@ -7,6 +7,8 @@ import (
 	"time"
 )
 
+const HTTPWriteTimeout = 30 * time.Second
+
 type Config struct {
 	HTTPAddr               string
 	PublicBaseURL          string
@@ -187,6 +189,9 @@ func validate(cfg Config) error {
 	}
 	if cfg.SMTPTimeout <= 0 {
 		return fmt.Errorf("SMTP_TIMEOUT must be greater than zero")
+	}
+	if cfg.SMTPTimeout >= HTTPWriteTimeout {
+		return fmt.Errorf("SMTP_TIMEOUT must be less than the HTTP write timeout of %s", HTTPWriteTimeout)
 	}
 	return nil
 }

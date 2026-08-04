@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"errors"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -95,6 +97,58 @@ func TestUseTokenRejectsSecondUse(t *testing.T) {
 	}
 	if _, err := st.UseToken(ctx, "one-time-token", TokenConfirmSubscribe, now.Add(2*time.Minute)); err == nil {
 		t.Fatal("second UseToken() error = nil, want already-used error")
+	}
+}
+
+func TestUseTokenAllowsExactlyOneConcurrentConsumer(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	databaseURL := "sqlite://" + filepath.Join(t.TempDir(), "tokens.db") + "?_busy_timeout=5000"
+
+	firstStore := openTestStoreAt(t, ctx, databaseURL)
+	if err := firstStore.Migrate(ctx); err != nil {
+		t.Fatalf("Migrate() error = %v", err)
+	}
+	secondStore := openTestStoreAt(t, ctx, databaseURL)
+	now := time.Date(2026, 8, 4, 12, 0, 0, 0, time.UTC)
+	sub, err := firstStore.UpsertPendingSubscriber(ctx, "concurrent@example.com", now)
+	if err != nil {
+		t.Fatalf("UpsertPendingSubscriber() error = %v", err)
+	}
+	if _, err := firstStore.CreateToken(ctx, sub.ID, TokenConfirmSubscribe, "concurrent-token", now.Add(time.Hour), now); err != nil {
+		t.Fatalf("CreateToken() error = %v", err)
+	}
+
+	start := make(chan struct{})
+	ready := make(chan struct{}, 2)
+	results := make(chan error, 2)
+	consume := func(st *SQLStore) {
+		ready <- struct{}{}
+		<-start
+		_, err := st.UseToken(ctx, "concurrent-token", TokenConfirmSubscribe, now.Add(time.Minute))
+		results <- err
+	}
+	go consume(firstStore)
+	go consume(secondStore)
+	<-ready
+	<-ready
+	close(start)
+
+	successes := 0
+	notFound := 0
+	for range 2 {
+		err := <-results
+		switch {
+		case err == nil:
+			successes++
+		case errors.Is(err, ErrNotFound):
+			notFound++
+		default:
+			t.Fatalf("UseToken() concurrent error = %v", err)
+		}
+	}
+	if successes != 1 || notFound != 1 {
+		t.Fatalf("concurrent results: successes = %d, ErrNotFound = %d; want 1 and 1", successes, notFound)
 	}
 }
 
@@ -234,12 +288,18 @@ func TestClaimPendingDeliverySkipsRetryExhausted(t *testing.T) {
 
 func openTestStore(t *testing.T, ctx context.Context) *SQLStore {
 	t.Helper()
-	st, err := Open(ctx, "sqlite://:memory:")
-	if err != nil {
-		t.Fatalf("Open() error = %v", err)
-	}
+	st := openTestStoreAt(t, ctx, "sqlite://:memory:")
 	if err := st.Migrate(ctx); err != nil {
 		t.Fatalf("Migrate() error = %v", err)
+	}
+	return st
+}
+
+func openTestStoreAt(t *testing.T, ctx context.Context, databaseURL string) *SQLStore {
+	t.Helper()
+	st, err := Open(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
 	}
 	t.Cleanup(func() {
 		if err := st.Close(); err != nil {

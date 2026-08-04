@@ -57,13 +57,48 @@ func TestSMTPSenderAppliesConnectionDeadline(t *testing.T) {
 		t.Fatalf("NewSMTPSender() error = %v", err)
 	}
 	conn := &deadlineConn{}
-	before := time.Now()
+	deadline := time.Date(2026, 8, 4, 12, 0, 0, 0, time.UTC)
 
-	if err := sender.applyDeadline(conn); err != nil {
+	if err := sender.applyDeadline(conn, deadline); err != nil {
 		t.Fatalf("applyDeadline() error = %v", err)
 	}
-	if conn.deadline.Before(before.Add(29*time.Second)) || conn.deadline.After(before.Add(31*time.Second)) {
-		t.Fatalf("deadline = %s, want roughly 30s from now", conn.deadline)
+	if !conn.deadline.Equal(deadline) {
+		t.Fatalf("deadline = %s, want %s", conn.deadline, deadline)
+	}
+}
+
+func TestSMTPSenderUsesOneDeadlineForDialAndConnection(t *testing.T) {
+	cfg := smtpTestConfig("tls")
+	cfg.SMTPTimeout = 250 * time.Millisecond
+	sender, err := NewSMTPSender(cfg)
+	if err != nil {
+		t.Fatalf("NewSMTPSender() error = %v", err)
+	}
+	conn := &handshakeDeadlineConn{}
+	var dialDeadline time.Time
+	sender.dialContext = func(ctx context.Context, _, _ string) (net.Conn, error) {
+		var ok bool
+		dialDeadline, ok = ctx.Deadline()
+		if !ok {
+			return nil, errors.New("dial context has no deadline")
+		}
+		time.Sleep(50 * time.Millisecond)
+		return conn, nil
+	}
+
+	err = sender.Send(context.Background(), Message{
+		ToEmail: "user@example.com",
+		Subject: "Subject",
+		HTML:    []byte("<p>Hello</p>"),
+	})
+	if !errors.Is(err, errTLSHandshakeRead) {
+		t.Fatalf("Send() error = %v, want TLS handshake read error", err)
+	}
+	if !conn.deadline.Equal(dialDeadline) {
+		t.Fatalf("connection deadline = %s, dial deadline = %s", conn.deadline, dialDeadline)
+	}
+	if remaining := time.Until(conn.deadline); remaining >= 225*time.Millisecond {
+		t.Fatalf("remaining SMTP budget = %s, want less than 225ms after dial", remaining)
 	}
 }
 

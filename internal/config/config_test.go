@@ -1,6 +1,7 @@
 package config
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -34,7 +35,7 @@ func TestLoadParsesValidEnv(t *testing.T) {
 	if !cfg.TrustProxyHeaders {
 		t.Fatal("TrustProxyHeaders = false, want true")
 	}
-	if cfg.SMTPTimeout != 30*time.Second {
+	if cfg.SMTPTimeout != 20*time.Second {
 		t.Fatalf("SMTPTimeout = %s", cfg.SMTPTimeout)
 	}
 }
@@ -64,7 +65,7 @@ func setValidEnv(t *testing.T) {
 	t.Setenv("TOKEN_TTL", "24h")
 	t.Setenv("RATE_LIMIT_PER_MINUTE", "5")
 	t.Setenv("TRUST_PROXY_HEADERS", "false")
-	t.Setenv("SMTP_TIMEOUT", "30s")
+	t.Setenv("SMTP_TIMEOUT", "20s")
 }
 
 func TestLoadRejectsUnsafeValues(t *testing.T) {
@@ -81,6 +82,8 @@ func TestLoadRejectsUnsafeValues(t *testing.T) {
 		{name: "token ttl zero", key: "TOKEN_TTL", raw: "0s"},
 		{name: "rate limit negative", key: "RATE_LIMIT_PER_MINUTE", raw: "-1"},
 		{name: "smtp timeout zero", key: "SMTP_TIMEOUT", raw: "0s"},
+		{name: "smtp timeout equals HTTP write timeout", key: "SMTP_TIMEOUT", raw: "30s"},
+		{name: "smtp timeout exceeds HTTP write timeout", key: "SMTP_TIMEOUT", raw: "31s"},
 	}
 
 	for _, tt := range tests {
@@ -91,6 +94,19 @@ func TestLoadRejectsUnsafeValues(t *testing.T) {
 				t.Fatal("Load() error = nil, want validation error")
 			}
 		})
+	}
+}
+
+func TestLoadRejectsMalformedTrustProxyHeaders(t *testing.T) {
+	setValidEnv(t)
+	t.Setenv("TRUST_PROXY_HEADERS", "not-a-bool")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("Load() error = nil, want malformed boolean error")
+	}
+	if !strings.Contains(err.Error(), "TRUST_PROXY_HEADERS") {
+		t.Fatalf("Load() error = %q, want TRUST_PROXY_HEADERS", err)
 	}
 }
 

@@ -65,7 +65,10 @@ func NewSMTPSender(cfg config.Config) (*SMTPSender, error) {
 }
 
 func (s *SMTPSender) Send(ctx context.Context, msg Message) error {
-	if err := ctx.Err(); err != nil {
+	deadline := time.Now().Add(s.timeout)
+	sendCtx, cancel := context.WithDeadline(ctx, deadline)
+	defer cancel()
+	if err := sendCtx.Err(); err != nil {
 		return err
 	}
 	msg = s.messageWithDefaults(msg)
@@ -75,11 +78,11 @@ func (s *SMTPSender) Send(ctx context.Context, msg Message) error {
 
 	switch s.tlsMode {
 	case "none":
-		return s.sendPlain(ctx, addr, auth, msg, payload)
+		return s.sendPlain(sendCtx, deadline, addr, auth, msg, payload)
 	case "starttls":
-		return s.sendStartTLS(ctx, addr, auth, msg, payload)
+		return s.sendStartTLS(sendCtx, deadline, addr, auth, msg, payload)
 	case "tls":
-		return s.sendTLS(ctx, addr, auth, msg, payload)
+		return s.sendTLS(sendCtx, deadline, addr, auth, msg, payload)
 	default:
 		return errors.New("unsupported SMTP TLS mode")
 	}
@@ -99,28 +102,28 @@ func newSMTPClient(conn net.Conn, host string) (smtpClient, error) {
 	return smtp.NewClient(conn, host)
 }
 
-func (s *SMTPSender) applyDeadline(conn net.Conn) error {
-	return conn.SetDeadline(time.Now().Add(s.timeout))
+func (s *SMTPSender) applyDeadline(conn net.Conn, deadline time.Time) error {
+	return conn.SetDeadline(deadline)
 }
 
-func (s *SMTPSender) dialPlain(ctx context.Context, addr string) (net.Conn, error) {
+func (s *SMTPSender) dialPlain(ctx context.Context, deadline time.Time, addr string) (net.Conn, error) {
 	conn, err := s.dialContext(ctx, "tcp", addr)
 	if err != nil {
 		return nil, err
 	}
-	if err := s.applyDeadline(conn); err != nil {
+	if err := s.applyDeadline(conn, deadline); err != nil {
 		_ = conn.Close()
 		return nil, err
 	}
 	return conn, nil
 }
 
-func (s *SMTPSender) dialTLS(ctx context.Context, addr string) (net.Conn, error) {
+func (s *SMTPSender) dialTLS(ctx context.Context, deadline time.Time, addr string) (net.Conn, error) {
 	conn, err := s.dialContext(ctx, "tcp", addr)
 	if err != nil {
 		return nil, err
 	}
-	if err := s.applyDeadline(conn); err != nil {
+	if err := s.applyDeadline(conn, deadline); err != nil {
 		_ = conn.Close()
 		return nil, err
 	}
@@ -132,8 +135,8 @@ func (s *SMTPSender) dialTLS(ctx context.Context, addr string) (net.Conn, error)
 	return tlsConn, nil
 }
 
-func (s *SMTPSender) sendPlain(ctx context.Context, addr string, auth smtp.Auth, msg Message, payload []byte) error {
-	conn, err := s.dialPlain(ctx, addr)
+func (s *SMTPSender) sendPlain(ctx context.Context, deadline time.Time, addr string, auth smtp.Auth, msg Message, payload []byte) error {
+	conn, err := s.dialPlain(ctx, deadline, addr)
 	if err != nil {
 		return err
 	}
@@ -146,8 +149,8 @@ func (s *SMTPSender) sendPlain(ctx context.Context, addr string, auth smtp.Auth,
 	return sendWithClient(client, auth, msg, payload)
 }
 
-func (s *SMTPSender) sendStartTLS(ctx context.Context, addr string, auth smtp.Auth, msg Message, payload []byte) error {
-	conn, err := s.dialPlain(ctx, addr)
+func (s *SMTPSender) sendStartTLS(ctx context.Context, deadline time.Time, addr string, auth smtp.Auth, msg Message, payload []byte) error {
+	conn, err := s.dialPlain(ctx, deadline, addr)
 	if err != nil {
 		return err
 	}
@@ -163,8 +166,8 @@ func (s *SMTPSender) sendStartTLS(ctx context.Context, addr string, auth smtp.Au
 	return sendWithClient(client, auth, msg, payload)
 }
 
-func (s *SMTPSender) sendTLS(ctx context.Context, addr string, auth smtp.Auth, msg Message, payload []byte) error {
-	conn, err := s.dialTLS(ctx, addr)
+func (s *SMTPSender) sendTLS(ctx context.Context, deadline time.Time, addr string, auth smtp.Auth, msg Message, payload []byte) error {
+	conn, err := s.dialTLS(ctx, deadline, addr)
 	if err != nil {
 		return err
 	}

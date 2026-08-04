@@ -101,7 +101,7 @@ func newHTTPServer(cfg config.Config, handler http.Handler) *http.Server {
 		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       15 * time.Second,
-		WriteTimeout:      30 * time.Second,
+		WriteTimeout:      config.HTTPWriteTimeout,
 		IdleTimeout:       60 * time.Second,
 	}
 }
