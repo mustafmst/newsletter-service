@@ -6,23 +6,39 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"io"
 	"mime"
 	"net"
 	"net/mail"
 	"net/smtp"
 	"strings"
+	"time"
 
 	"github.com/pmstowski/newsletter/internal/config"
 )
 
+type smtpClient interface {
+	StartTLS(config *tls.Config) error
+	Auth(auth smtp.Auth) error
+	Mail(from string) error
+	Rcpt(to string) error
+	Data() (io.WriteCloser, error)
+	Quit() error
+	Close() error
+}
+
+type smtpClientFactory func(conn net.Conn, host string) (smtpClient, error)
+
 type SMTPSender struct {
-	host      string
-	port      int
-	username  string
-	password  string
-	fromEmail string
-	fromName  string
-	tlsMode   string
+	host          string
+	port          int
+	username      string
+	password      string
+	fromEmail     string
+	fromName      string
+	tlsMode       string
+	timeout       time.Duration
+	clientFactory smtpClientFactory
 }
 
 func NewSMTPSender(cfg config.Config) (*SMTPSender, error) {
@@ -32,13 +48,15 @@ func NewSMTPSender(cfg config.Config) (*SMTPSender, error) {
 		return nil, fmt.Errorf("unsupported SMTP TLS mode %q", cfg.SMTPTLSMode)
 	}
 	return &SMTPSender{
-		host:      cfg.SMTPHost,
-		port:      cfg.SMTPPort,
-		username:  cfg.SMTPUsername,
-		password:  cfg.SMTPPassword,
-		fromEmail: cfg.SMTPFromEmail,
-		fromName:  cfg.SMTPFromName,
-		tlsMode:   cfg.SMTPTLSMode,
+		host:          cfg.SMTPHost,
+		port:          cfg.SMTPPort,
+		username:      cfg.SMTPUsername,
+		password:      cfg.SMTPPassword,
+		fromEmail:     cfg.SMTPFromEmail,
+		fromName:      cfg.SMTPFromName,
+		tlsMode:       cfg.SMTPTLSMode,
+		timeout:       cfg.SMTPTimeout,
+		clientFactory: newSMTPClient,
 	}, nil
 }
 
@@ -53,11 +71,11 @@ func (s *SMTPSender) Send(ctx context.Context, msg Message) error {
 
 	switch s.tlsMode {
 	case "none":
-		return smtp.SendMail(addr, auth, msg.FromEmail, []string{msg.ToEmail}, payload)
+		return s.sendPlain(ctx, addr, auth, msg, payload)
 	case "starttls":
-		return s.sendStartTLS(addr, auth, msg, payload)
+		return s.sendStartTLS(ctx, addr, auth, msg, payload)
 	case "tls":
-		return s.sendTLS(addr, auth, msg, payload)
+		return s.sendTLS(ctx, addr, auth, msg, payload)
 	default:
 		return errors.New("unsupported SMTP TLS mode")
 	}
@@ -73,9 +91,65 @@ func (s *SMTPSender) messageWithDefaults(msg Message) Message {
 	return msg
 }
 
-func (s *SMTPSender) sendStartTLS(addr string, auth smtp.Auth, msg Message, payload []byte) error {
-	client, err := smtp.Dial(addr)
+func newSMTPClient(conn net.Conn, host string) (smtpClient, error) {
+	return smtp.NewClient(conn, host)
+}
+
+func (s *SMTPSender) applyDeadline(conn net.Conn) error {
+	return conn.SetDeadline(time.Now().Add(s.timeout))
+}
+
+func (s *SMTPSender) dialPlain(ctx context.Context, addr string) (net.Conn, error) {
+	dialer := &net.Dialer{Timeout: s.timeout}
+	conn, err := dialer.DialContext(ctx, "tcp", addr)
 	if err != nil {
+		return nil, err
+	}
+	if err := s.applyDeadline(conn); err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+	return conn, nil
+}
+
+func (s *SMTPSender) dialTLS(ctx context.Context, addr string) (net.Conn, error) {
+	dialer := tls.Dialer{
+		NetDialer: &net.Dialer{Timeout: s.timeout},
+		Config:    &tls.Config{ServerName: s.host, MinVersion: tls.VersionTLS12},
+	}
+	conn, err := dialer.DialContext(ctx, "tcp", addr)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.applyDeadline(conn); err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+	return conn, nil
+}
+
+func (s *SMTPSender) sendPlain(ctx context.Context, addr string, auth smtp.Auth, msg Message, payload []byte) error {
+	conn, err := s.dialPlain(ctx, addr)
+	if err != nil {
+		return err
+	}
+	client, err := s.clientFactory(conn, s.host)
+	if err != nil {
+		_ = conn.Close()
+		return err
+	}
+	defer client.Close()
+	return sendWithClient(client, auth, msg, payload)
+}
+
+func (s *SMTPSender) sendStartTLS(ctx context.Context, addr string, auth smtp.Auth, msg Message, payload []byte) error {
+	conn, err := s.dialPlain(ctx, addr)
+	if err != nil {
+		return err
+	}
+	client, err := s.clientFactory(conn, s.host)
+	if err != nil {
+		_ = conn.Close()
 		return err
 	}
 	defer client.Close()
@@ -85,12 +159,12 @@ func (s *SMTPSender) sendStartTLS(addr string, auth smtp.Auth, msg Message, payl
 	return sendWithClient(client, auth, msg, payload)
 }
 
-func (s *SMTPSender) sendTLS(addr string, auth smtp.Auth, msg Message, payload []byte) error {
-	conn, err := tls.Dial("tcp", addr, &tls.Config{ServerName: s.host, MinVersion: tls.VersionTLS12})
+func (s *SMTPSender) sendTLS(ctx context.Context, addr string, auth smtp.Auth, msg Message, payload []byte) error {
+	conn, err := s.dialTLS(ctx, addr)
 	if err != nil {
 		return err
 	}
-	client, err := smtp.NewClient(conn, s.host)
+	client, err := s.clientFactory(conn, s.host)
 	if err != nil {
 		_ = conn.Close()
 		return err
@@ -99,7 +173,7 @@ func (s *SMTPSender) sendTLS(addr string, auth smtp.Auth, msg Message, payload [
 	return sendWithClient(client, auth, msg, payload)
 }
 
-func sendWithClient(client *smtp.Client, auth smtp.Auth, msg Message, payload []byte) error {
+func sendWithClient(client smtpClient, auth smtp.Auth, msg Message, payload []byte) error {
 	if auth != nil {
 		if err := client.Auth(auth); err != nil {
 			return err

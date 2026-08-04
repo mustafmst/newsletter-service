@@ -1,7 +1,9 @@
 package mailer
 
 import (
+	"net"
 	"testing"
+	"time"
 
 	"github.com/pmstowski/newsletter/internal/config"
 )
@@ -19,6 +21,47 @@ func TestNewSMTPSenderRejectsUnsupportedTLSMode(t *testing.T) {
 	cfg := smtpTestConfig("weird")
 	if _, err := NewSMTPSender(cfg); err == nil {
 		t.Fatal("expected unsupported TLS mode error")
+	}
+}
+
+func TestNewSMTPSenderStoresTimeout(t *testing.T) {
+	cfg := smtpTestConfig("starttls")
+	cfg.SMTPTimeout = 30 * time.Second
+
+	sender, err := NewSMTPSender(cfg)
+	if err != nil {
+		t.Fatalf("NewSMTPSender() error = %v", err)
+	}
+	if sender.timeout != 30*time.Second {
+		t.Fatalf("timeout = %s, want 30s", sender.timeout)
+	}
+}
+
+type deadlineConn struct {
+	net.Conn
+	deadline time.Time
+}
+
+func (c *deadlineConn) SetDeadline(t time.Time) error {
+	c.deadline = t
+	return nil
+}
+
+func TestSMTPSenderAppliesConnectionDeadline(t *testing.T) {
+	cfg := smtpTestConfig("starttls")
+	cfg.SMTPTimeout = 30 * time.Second
+	sender, err := NewSMTPSender(cfg)
+	if err != nil {
+		t.Fatalf("NewSMTPSender() error = %v", err)
+	}
+	conn := &deadlineConn{}
+	before := time.Now()
+
+	if err := sender.applyDeadline(conn); err != nil {
+		t.Fatalf("applyDeadline() error = %v", err)
+	}
+	if conn.deadline.Before(before.Add(29*time.Second)) || conn.deadline.After(before.Add(31*time.Second)) {
+		t.Fatalf("deadline = %s, want roughly 30s from now", conn.deadline)
 	}
 }
 
@@ -44,5 +87,6 @@ func smtpTestConfig(mode string) config.Config {
 		SMTPFromEmail: "news@example.com",
 		SMTPFromName:  "Example",
 		SMTPTLSMode:   mode,
+		SMTPTimeout:   30 * time.Second,
 	}
 }
