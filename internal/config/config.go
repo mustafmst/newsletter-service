@@ -30,6 +30,8 @@ type Config struct {
 	MaxSendAttempts        int
 	TokenTTL               time.Duration
 	RateLimitPerMinute     int
+	TrustProxyHeaders      bool
+	SMTPTimeout            time.Duration
 }
 
 func Load() (Config, error) {
@@ -107,6 +109,15 @@ func Load() (Config, error) {
 	if cfg.RateLimitPerMinute, err = parseInt("RATE_LIMIT_PER_MINUTE"); err != nil {
 		return Config{}, err
 	}
+	if cfg.TrustProxyHeaders, err = parseBool("TRUST_PROXY_HEADERS"); err != nil {
+		return Config{}, err
+	}
+	if cfg.SMTPTimeout, err = parseDuration("SMTP_TIMEOUT"); err != nil {
+		return Config{}, err
+	}
+	if err := validate(cfg); err != nil {
+		return Config{}, err
+	}
 
 	return cfg, nil
 }
@@ -141,4 +152,41 @@ func parseDuration(key string) (time.Duration, error) {
 		return 0, fmt.Errorf("%s must be a duration: %w", key, err)
 	}
 	return value, nil
+}
+
+func parseBool(key string) (bool, error) {
+	raw, err := required(key)
+	if err != nil {
+		return false, err
+	}
+	value, err := strconv.ParseBool(raw)
+	if err != nil {
+		return false, fmt.Errorf("%s must be a boolean: %w", key, err)
+	}
+	return value, nil
+}
+
+func validate(cfg Config) error {
+	if cfg.SMTPPort < 1 || cfg.SMTPPort > 65535 {
+		return fmt.Errorf("SMTP_PORT must be between 1 and 65535")
+	}
+	if cfg.NewsletterScanInterval <= 0 {
+		return fmt.Errorf("NEWSLETTER_SCAN_INTERVAL must be greater than zero")
+	}
+	if cfg.SendDelay < 0 {
+		return fmt.Errorf("SEND_DELAY must be zero or greater")
+	}
+	if cfg.MaxSendAttempts < 1 {
+		return fmt.Errorf("MAX_SEND_ATTEMPTS must be at least 1")
+	}
+	if cfg.TokenTTL <= 0 {
+		return fmt.Errorf("TOKEN_TTL must be greater than zero")
+	}
+	if cfg.RateLimitPerMinute < 0 {
+		return fmt.Errorf("RATE_LIMIT_PER_MINUTE must be zero or greater")
+	}
+	if cfg.SMTPTimeout <= 0 {
+		return fmt.Errorf("SMTP_TIMEOUT must be greater than zero")
+	}
+	return nil
 }
