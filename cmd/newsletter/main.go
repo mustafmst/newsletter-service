@@ -57,11 +57,7 @@ func run(logger *slog.Logger) error {
 		Logger: logger,
 		Clock:  time.Now,
 	})
-	server := &http.Server{
-		Addr:              cfg.HTTPAddr,
-		Handler:           loggingMiddleware(logger, handler),
-		ReadHeaderTimeout: 10 * time.Second,
-	}
+	server := newHTTPServer(cfg, loggingMiddleware(logger, handler))
 
 	go worker.RunScanner(ctx, cfg.NewsletterScanInterval, func(ctx context.Context) error {
 		return worker.ScanOnce(ctx, st, cfg.NewsletterDir, cfg.SMTPFromName, logger)
@@ -97,6 +93,17 @@ func loggingMiddleware(logger *slog.Logger, next http.Handler) http.Handler {
 		next.ServeHTTP(w, r)
 		logger.Info("http request", "method", r.Method, "path", r.URL.Path, "remote_addr", r.RemoteAddr)
 	})
+}
+
+func newHTTPServer(cfg config.Config, handler http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              cfg.HTTPAddr,
+		Handler:           handler,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
 }
 
 func databaseSummary(databaseURL string) string {
